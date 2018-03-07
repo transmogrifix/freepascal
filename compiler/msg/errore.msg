@@ -142,7 +142,7 @@ general_e_exception_raised=01026_E_Compilation raised exception internally
 #
 # Scanner
 #
-# 02105 is the last used one
+# 02106 is the last used one
 #
 % \section{Scanner messages.}
 % This section lists the messages that the scanner emits. The scanner takes
@@ -428,6 +428,8 @@ scan_w_setpeosversion_not_support=02103_W_SETPEOSVERSION is not supported by the
 scan_w_setpesubsysversion_not_support=02104_W_SETPESUBSYSVERSION is not supported by the target OS
 % The \var{\{\$SETPESUBSYSVERSION\}} directive is not supported by the target OS.
 scan_n_changecputype=02105_N_Changed CPU type to be consistent with specified controller
+scan_e_unresolved_attribute=02106_E_Unresolved custom attribute: "$1".
+% A custom attribute is defined, but there is no identifier to bind it to.
 % \end{description}
 #
 # Parser

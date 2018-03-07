@@ -39,7 +39,7 @@ interface
     function class_destructor_head(astruct: tabstractrecorddef):tprocdef;
     function constructor_head:tprocdef;
     function destructor_head:tprocdef;
-    procedure struct_property_dec(is_classproperty:boolean);
+    procedure struct_property_dec(is_classproperty:boolean;var rtti_attrs_def: trtti_attributesdef);
 
 implementation
 
@@ -161,7 +161,7 @@ implementation
       end;
 
 
-    procedure struct_property_dec(is_classproperty:boolean);
+    procedure struct_property_dec(is_classproperty:boolean;var rtti_attrs_def: trtti_attributesdef);
       var
         p : tpropertysym;
       begin
@@ -213,6 +213,13 @@ implementation
               Message(parser_e_enumerator_identifier_required);
             consume(_SEMICOLON);
           end;
+        if assigned(rtti_attrs_def) then
+          begin
+            add_synthetic_rtti_funtion_declarations(rtti_attrs_def,current_structdef.RttiName+'_'+p.RealName);
+            p.rtti_attributesdef := rtti_attrs_def;
+            rtti_attrs_def:=nil;
+          end;
+
         { hint directives, these can be separated by semicolons here,
           that needs to be handled here with a loop (PFV) }
         while try_consume_hintdirective(p.symoptions,p.deprecatedmsg) do
@@ -1043,6 +1050,7 @@ implementation
         fields_allowed, is_classdef, class_fields, is_final, final_fields: boolean;
         vdoptions: tvar_dec_options;
         fieldlist: tfpobjectlist;
+        rtti_attrs_def: trtti_attributesdef;
 
 
       procedure parse_const;
@@ -1135,6 +1143,7 @@ implementation
         class_fields:=false;
         is_final:=false;
         final_fields:=false;
+        rtti_attrs_def:=nil;
         hadgeneric:=false;
         object_member_blocktype:=bt_general;
         fieldlist:=tfpobjectlist.create(false);
@@ -1149,10 +1158,12 @@ implementation
               end;
             _VAR :
               begin
+                rtti_attrs_def := nil;
                 parse_var;
               end;
             _CONST:
               begin
+                rtti_attrs_def := nil;
                 parse_const
               end;
             _ID :
@@ -1236,6 +1247,7 @@ implementation
                       begin
                         if object_member_blocktype=bt_general then
                           begin
+                            rtti_attrs_def := nil;
                             if (idtoken=_GENERIC) and
                                 not (m_delphi in current_settings.modeswitches) and
                                 not fields_allowed then
@@ -1278,7 +1290,7 @@ implementation
                               end;
                           end
                         else if object_member_blocktype=bt_type then
-                          types_dec(true,hadgeneric)
+                          types_dec(true,hadgeneric, rtti_attrs_def)
                         else if object_member_blocktype=bt_const then
                           begin
                             typedconstswritable:=false;
@@ -1301,7 +1313,7 @@ implementation
               end;
             _PROPERTY :
               begin
-                struct_property_dec(is_classdef);
+                struct_property_dec(is_classdef, rtti_attrs_def);
                 fields_allowed:=false;
                 is_classdef:=false;
               end;
@@ -1314,13 +1326,23 @@ implementation
             _CONSTRUCTOR,
             _DESTRUCTOR :
               begin
+                rtti_attrs_def := nil;
                 method_dec(current_structdef,is_classdef,hadgeneric);
                 fields_allowed:=false;
                 is_classdef:=false;
                 hadgeneric:=false;
               end;
+            _LECKKLAMMER:
+              begin
+                if m_prefixed_attributes in current_settings.modeswitches then
+                  parse_rttiattributes(rtti_attrs_def)
+                else
+                  consume(_ID);
+              end;
             _END :
               begin
+                if assigned(rtti_attrs_def) and (rtti_attrs_def.get_attribute_count>0) then
+                  Message1(scan_e_unresolved_attribute,trtti_attribute(rtti_attrs_def.rtti_attributes[0]).typesym.prettyname);
                 consume(_END);
                 break;
               end;

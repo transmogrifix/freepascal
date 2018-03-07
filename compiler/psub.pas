@@ -31,6 +31,7 @@ interface
       symdef,procinfo,optdfa;
 
     type
+      tcggetcodeblockfunc = function(pd: tprocdef) : tnode;
 
       { tcgprocinfo }
 
@@ -66,7 +67,7 @@ interface
         procedure resetprocdef;
         procedure add_to_symtablestack;
         procedure remove_from_symtablestack;
-        procedure parse_body;
+        procedure parse_body(get_code_block_func: tcggetcodeblockfunc=nil);
 
         function has_assembler_child : boolean;
       end;
@@ -83,7 +84,7 @@ interface
     { reads any routine in the implementation, or a non-method routine
       declaration in the interface (depending on whether or not parse_only is
       true) }
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef; isgeneric:boolean; get_code_block_func: tcggetcodeblockfunc = nil);
 
     { parses only the body of a non nested routine; needs a correctly setup pd }
     procedure read_proc_body(pd:tprocdef);
@@ -311,10 +312,44 @@ implementation
           end;
       end;
 
+    procedure init_main_block_syms(block: tnode);
+      var
+         oldfilepos: tfileposinfo;
+      begin
+        { initialized variables }
+        if current_procinfo.procdef.localst.symtabletype=localsymtable then
+         begin
+           { initialization of local variables with their initial
+             values: part of function entry }
+           oldfilepos:=current_filepos;
+           current_filepos:=current_procinfo.entrypos;
+           current_procinfo.procdef.localst.SymList.ForEachCall(@initializevars,block);
+           current_filepos:=oldfilepos;
+         end
+        else if current_procinfo.procdef.localst.symtabletype=staticsymtable then
+         begin
+           { for program and unit initialization code we also need to
+             initialize the local variables used of Default() }
+           oldfilepos:=current_filepos;
+           current_filepos:=current_procinfo.entrypos;
+           current_procinfo.procdef.localst.SymList.ForEachCall(@initializedefaultvars,block);
+           current_filepos:=oldfilepos;
+         end;
+
+        if assigned(current_procinfo.procdef.parentfpstruct) then
+         begin
+           { we only do this after the code has been parsed because
+             otherwise for-loop counters moved to the struct cause
+             errors; we still do it nevertheless to prevent false
+             "unused" symbols warnings and to assist debug info
+             generation }
+           redirect_parentfpstruct_local_syms(current_procinfo.procdef);
+           { finish the parentfpstruct (add padding, ...) }
+           finish_parentfpstruct(current_procinfo.procdef);
+         end;
+      end;
 
     function block(islibrary : boolean) : tnode;
-      var
-        oldfilepos: tfileposinfo;
       begin
          { parse const,types and vars }
          read_declarations(islibrary);
@@ -374,37 +409,7 @@ implementation
             begin
                { parse routine body }
                block:=statement_block(_BEGIN);
-               { initialized variables }
-               if current_procinfo.procdef.localst.symtabletype=localsymtable then
-                 begin
-                   { initialization of local variables with their initial
-                     values: part of function entry }
-                   oldfilepos:=current_filepos;
-                   current_filepos:=current_procinfo.entrypos;
-                   current_procinfo.procdef.localst.SymList.ForEachCall(@initializevars,block);
-                   current_filepos:=oldfilepos;
-                 end
-               else if current_procinfo.procdef.localst.symtabletype=staticsymtable then
-                 begin
-                   { for program and unit initialization code we also need to
-                     initialize the local variables used of Default() }
-                   oldfilepos:=current_filepos;
-                   current_filepos:=current_procinfo.entrypos;
-                   current_procinfo.procdef.localst.SymList.ForEachCall(@initializedefaultvars,block);
-                   current_filepos:=oldfilepos;
-                 end;
-
-               if assigned(current_procinfo.procdef.parentfpstruct) then
-                 begin
-                   { we only do this after the code has been parsed because
-                     otherwise for-loop counters moved to the struct cause
-                     errors; we still do it nevertheless to prevent false
-                     "unused" symbols warnings and to assist debug info
-                     generation }
-                   redirect_parentfpstruct_local_syms(current_procinfo.procdef);
-                   { finish the parentfpstruct (add padding, ...) }
-                   finish_parentfpstruct(current_procinfo.procdef);
-                 end;
+               init_main_block_syms(block);
             end;
       end;
 
@@ -1808,7 +1813,7 @@ implementation
        end;
 
 
-    procedure tcgprocinfo.parse_body;
+    procedure tcgprocinfo.parse_body(get_code_block_func: tcggetcodeblockfunc);
       var
          old_current_procinfo : tprocinfo;
          old_block_type : tblock_type;
@@ -1891,8 +1896,17 @@ implementation
              current_scanner.startrecordtokens(procdef.generictokenbuf);
            end;
 
-         { parse the code ... }
-         code:=block(current_module.islibrary);
+         if assigned(get_code_block_func) then
+           begin
+             { generate the code-nodes }
+             code:=get_code_block_func(procdef);
+             init_main_block_syms(code);
+           end
+         else
+           begin
+             { parse the code ... }
+             code:=block(current_module.islibrary);
+           end;
 
          if recordtokens then
            begin
@@ -2005,7 +2019,7 @@ implementation
       end;
 
 
-    procedure read_proc_body(old_current_procinfo:tprocinfo;pd:tprocdef);
+    procedure read_proc_body(old_current_procinfo:tprocinfo;pd:tprocdef;get_code_block_func: tcggetcodeblockfunc=nil);
       {
         Parses the procedure directives, then parses the procedure body, then
         generates the code for it
@@ -2051,7 +2065,7 @@ implementation
            tokeninfo^[_FAIL].keyword:=alllanguagemodes;
          end;
 
-        tcgprocinfo(current_procinfo).parse_body;
+        tcgprocinfo(current_procinfo).parse_body(get_code_block_func);
 
         { reset _FAIL as _SELF normal }
         if (pd.proctypeoption=potype_constructor) then
@@ -2100,7 +2114,7 @@ implementation
                 assigned(current_procinfo.procdef.owner) and
                 (current_procinfo.procdef.owner.defowner=current_procinfo.procdef.struct)
               )
-            ) then
+            ) and not(assigned(get_code_block_func)) then
           consume(_SEMICOLON);
 
         if not isnestedproc then
@@ -2124,7 +2138,7 @@ implementation
       end;
 
 
-    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef;isgeneric:boolean);
+    procedure read_proc(isclassmethod:boolean; usefwpd: tprocdef; isgeneric:boolean; get_code_block_func: tcggetcodeblockfunc);
       {
         Parses the procedure directives, then parses the procedure body, then
         generates the code for it
@@ -2267,7 +2281,7 @@ implementation
          { compile procedure when a body is needed }
          if (pd_body in pdflags) then
            begin
-             read_proc_body(old_current_procinfo,pd);
+             read_proc_body(old_current_procinfo,pd, get_code_block_func);
            end
          else
            begin

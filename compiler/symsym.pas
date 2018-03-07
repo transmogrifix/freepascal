@@ -350,6 +350,7 @@ interface
           dispid        : longint;
           propaccesslist: array[tpropaccesslisttypes] of tpropaccesslist;
           parast : tsymtable;
+          rtti_attributesdef : trtti_attributesdef;
           constructor create(const n : string);virtual;
           destructor  destroy;override;
           constructor ppuload(ppufile:tcompilerppufile);
@@ -1370,6 +1371,7 @@ implementation
          for pap:=low(tpropaccesslisttypes) to high(tpropaccesslisttypes) do
            propaccesslist[pap].free;
          parast.free;
+         rtti_attributesdef.free;
          inherited destroy;
       end;
 

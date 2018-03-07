@@ -358,6 +358,9 @@
 {$endif FPC_USE_WIN32_SEH}
        end;
 
+       TCustomAttribute = class(TObject)
+       end;
+
     Const
        ExceptProc : TExceptProc = Nil;
        RaiseProc : TExceptProc = Nil;
