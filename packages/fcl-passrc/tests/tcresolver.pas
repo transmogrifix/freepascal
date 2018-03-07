@@ -56,7 +56,6 @@ type
   private
     FFilename: string;
     FModule: TPasModule;
-    FOnContinueParsing: TOnContinueParsing;
     FOnFindUnit: TOnFindUnit;
     FParser: TPasParser;
     FStreamResolver: TStreamResolver;
@@ -72,8 +71,7 @@ type
       overload; override;
     function FindUnit(const AName, InFilename: String; NameExpr,
       InFileExpr: TPasExpr): TPasModule; override;
-    procedure ContinueParsing; override;
-    property OnContinueParsing: TOnContinueParsing read FOnContinueParsing write FOnContinueParsing;
+    procedure UsedInterfacesFinished(Section: TPasSection); override;
     property OnFindUnit: TOnFindUnit read FOnFindUnit write FOnFindUnit;
     property Filename: string read FFilename write FFilename;
     property StreamResolver: TStreamResolver read FStreamResolver write FStreamResolver;
@@ -135,6 +133,7 @@ type
     Procedure SetUp; override;
     Procedure TearDown; override;
     procedure CreateEngine(var TheEngine: TPasTreeContainer); override;
+    procedure ParseModule; override;
     procedure ParseProgram; virtual;
     procedure ParseUnit; virtual;
     procedure CheckReferenceDirectives; virtual;
@@ -777,9 +776,11 @@ begin
   Result:=OnFindUnit(Self,AName,InFilename,NameExpr,InFileExpr);
 end;
 
-procedure TTestEnginePasResolver.ContinueParsing;
+procedure TTestEnginePasResolver.UsedInterfacesFinished(Section: TPasSection);
 begin
-  OnContinueParsing(Self);
+  if Section=nil then ;
+  // do not parse recursively
+  // using a queue
 end;
 
 { TCustomTestResolver }
@@ -803,6 +804,8 @@ begin
   {$IFDEF VerbosePasResolverMem}
   writeln('TTestResolver.TearDown ResolverEngine.Clear');
   {$ENDIF}
+  if ResolverEngine.Parser=Parser then
+    ResolverEngine.Parser:=nil;
   ResolverEngine.Clear;
   if FModules<>nil then
     begin
@@ -828,6 +831,56 @@ procedure TCustomTestResolver.CreateEngine(var TheEngine: TPasTreeContainer);
 begin
   FResolverEngine:=AddModule(MainFilename);
   TheEngine:=ResolverEngine;
+end;
+
+procedure TCustomTestResolver.ParseModule;
+var
+  Section: TPasSection;
+  i: Integer;
+  CurResolver: TTestEnginePasResolver;
+  Found: Boolean;
+begin
+  if ResolverEngine.Parser=nil then
+    ResolverEngine.Parser:=Parser;
+
+  inherited ParseModule;
+  repeat
+    Found:=false;
+    for i:=0 to ModuleCount-1 do
+      begin
+      CurResolver:=Modules[i];
+      if CurResolver.Parser=nil then continue;
+      if not CurResolver.Parser.CanParseContinue(Section) then
+        continue;
+      {$IFDEF VerbosePasResolver}
+      writeln('TCustomTestResolver.ParseModule continue parsing section=',GetObjName(Section),' of ',CurResolver.Filename);
+      {$ENDIF}
+      Found:=true;
+      CurResolver.Parser.ParseContinue;
+      break;
+      end;
+  until not Found;
+
+  for i:=0 to ModuleCount-1 do
+    begin
+    CurResolver:=Modules[i];
+    if CurResolver.Parser=nil then
+      begin
+      if CurResolver.CurrentParser<>nil then
+        Fail(CurResolver.Filename+' Parser<>CurrentParser Parser="'+GetObjName(CurResolver.Parser)+'" CurrentParser='+GetObjName(CurResolver.CurrentParser));
+      continue;
+      end;
+    if CurResolver.Parser.CurModule<>nil then
+      begin
+      Section:=CurResolver.Parser.GetLastSection;
+      {$IFDEF VerbosePasResolver}
+      writeln('TCustomTestResolver.ParseModule module not finished "',GetObjName(CurResolver.RootElement),'" LastSection=',GetObjName(Section)+' PendingUsedIntf='+GetObjName(Section.PendingUsedIntf));
+      if (Section<>nil) and (Section.PendingUsedIntf<>nil) then
+        writeln('TCustomTestResolver.ParseModule PendingUsedIntf=',GetObjName(Section.PendingUsedIntf.Module));
+      {$ENDIF}
+      Fail('module not finished "'+GetObjName(CurResolver.RootElement)+'"');
+      end;
+    end;
 end;
 
 procedure TCustomTestResolver.ParseProgram;
@@ -1592,7 +1645,7 @@ begin
   ErrFilename:=CurEngine.Scanner.CurFilename;
   ErrRow:=CurEngine.Scanner.CurRow;
   ErrCol:=CurEngine.Scanner.CurColumn;
-  writeln('ERROR: TTestResolver.OnPasResolverFindUnit during parsing: '+E.ClassName+':'+E.Message
+  writeln('ERROR: TCustomTestResolver.HandleError during parsing: '+E.ClassName+':'+E.Message
     +' File='+ErrFilename
     +' LineNo='+IntToStr(ErrRow)
     +' Col='+IntToStr(ErrCol)
@@ -1636,7 +1689,6 @@ begin
   Result.Filename:=aFilename;
   Result.AddObjFPCBuiltInIdentifiers;
   Result.OnFindUnit:=@OnPasResolverFindUnit;
-  Result.OnContinueParsing:=@OnPasResolverContinueParsing;
   Result.OnLog:=@OnPasResolverLog;
   FModules.Add(Result);
 end;
@@ -1787,6 +1839,7 @@ function TCustomTestResolver.OnPasResolverFindUnit(SrcResolver: TPasResolver;
     CurEngine.Scanner.CurrentBoolSwitches:=[bsHints,bsNotes,bsWarnings];
     CurEngine.Parser:=TPasParser.Create(CurEngine.Scanner,
                                         CurEngine.StreamResolver,CurEngine);
+    CurEngine.Parser.Options:=CurEngine.Parser.Options+[po_StopOnUnitInterface];
     if CompareText(ExtractFileUnitName(CurEngine.Filename),'System')=0 then
       CurEngine.Parser.ImplicitUses.Clear;
     CurEngine.Scanner.OpenFile(CurEngine.Filename);
@@ -2056,7 +2109,7 @@ begin
   writeln('TCustomTestResolver.OnPasResolverContinueParsing "',CurEngine.Module.Name,'"...');
   {$ENDIF}
   try
-    CurEngine.Parser.ParseContinueImplementation;
+    CurEngine.Parser.ParseContinue;
   except
     on E: Exception do
       HandleError(CurEngine,E);

@@ -488,7 +488,7 @@ type
 
   { TCustomHTMLModule }
 
-  TCustomHTMLModule = Class(TCustomHTTPModule)
+  TCustomHTMLModule = Class(TSessionHTTPModule)
   private
     FDocument : THTMLDocument;
     FActions: THTMLContentActions;
@@ -506,14 +506,19 @@ type
   Public
     Constructor Create(AOwner : TComponent);override;
     Procedure HandleRequest(ARequest : TRequest; AResponse : TResponse); override;
+    Property Document : THTMLDocument Read FDocument;
   end;
   
   TFPHTMLModule=Class(TCustomHTMLModule)
   Published
-    Property OnGetContent;
     Property Actions;
+    Property CreateSession;
+    Property Session;
     Property OnCreateDocument;
     Property OnCreateWriter;
+    Property OnGetContent;
+    Property OnNewSession;
+    Property OnSessionExpired;
   end;
   
   EHTMLError = Class(EHTTP);
@@ -1163,13 +1168,21 @@ begin
       If Assigned(OnGetContent) then
         OnGetContent(Self,ARequest,FWriter,B);
       If Not B then
-        Raise EHTMLError.Create(SErrRequestNotHandled);
-      If (AResponse.ContentStream=Nil) then
         begin
-        M:=TMemoryStream.Create;
-        AResponse.ContentStream:=M;
+        Actions.HandleRequest(ARequest,FWriter,B);
+        If Not B then
+          Raise EHTMLError.Create(SErrRequestNotHandled);
+        end
+      else
+        begin
+        If (AResponse.ContentStream=Nil) then
+          begin
+          M:=TMemoryStream.Create;
+          AResponse.ContentStream:=M;
+          AResponse.FreeContentStream:=True;
+          FDocument.SaveToStream(AResponse.ContentStream);
+          end;
         end;
-      FDocument.SaveToStream(AResponse.ContentStream);
     Finally
       FreeAndNil(FWriter);
     end;

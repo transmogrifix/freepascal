@@ -29,7 +29,7 @@ uses
 const
   VersionMajor = 0;
   VersionMinor = 9;
-  VersionRelease = 5;
+  VersionRelease = 6;
   VersionExtra = '+beta';
   DefaultConfigFile = 'pas2js.cfg';
 
@@ -230,7 +230,6 @@ type
     FShowDebug: boolean;
     FUseAnalyzer: TPasAnalyzer;
     FUsedBy: array[TUsedBySection] of TFPList; // list of TPas2jsCompilerFile
-    procedure FPasResolverContinueParsing(Sender: TObject);
     function GetUsedBy(Section: TUsedBySection; Index: integer): TPas2jsCompilerFile;
     function GetUsedByCount(Section: TUsedBySection): integer;
     function OnConverterIsElementUsed(Sender: TObject; El: TPasElement): boolean;
@@ -260,6 +259,7 @@ type
     procedure OnPasTreeCheckSrcName(const Element: TPasElement);
     procedure OpenFile(aFilename: string);// beware: this changes FileResolver.BaseDirectory
     procedure ParsePascal;
+    procedure ParsePascalContinue;
     procedure CreateJS;
     function GetPasFirstSection: TPasSection;
     function GetPasImplSection: TPasSection;
@@ -309,6 +309,7 @@ type
     FFileCache: TPas2jsFilesCache;
     FFileCacheAutoFree: boolean;
     FFiles: TAVLTree; // tree of TPas2jsCompilerFile sorted for PasFilename
+    FParsingModules: TFPList; // list of TPas2jsCompilerFile ordered by uses sections
     FHasShownLogo: boolean;
     FLog: TPas2jsLogger;
     FMainFile: TPas2jsCompilerFile;
@@ -340,6 +341,8 @@ type
       ): boolean;
     procedure AddDefinesForTargetPlatform;
     procedure AddDefinesForTargetProcessor;
+    procedure AddParsingModule(aFile: TPas2jsCompilerFile);
+    procedure RemoveParsingModule(aFile: TPas2jsCompilerFile);
     procedure CfgSyntaxError(const Msg: string);
     procedure ConditionEvalLog(Sender: TCondDirectiveEvaluator;
       Args: array of const);
@@ -373,6 +376,7 @@ type
     // DoWriteJSFile: return false to use the default write function.
     function DoWriteJSFile(const DestFilename: String; aWriter: TPas2JSMapper): Boolean; virtual;
     procedure Compile(StartTime: TDateTime);
+    procedure ParseQueue;
     function MarkNeedBuilding(aFile: TPas2jsCompilerFile; Checked: TAVLTree;
       var SrcFileCount: integer): boolean;
     procedure OptimizeProgram(aFile: TPas2jsCompilerFile); virtual;
@@ -671,7 +675,6 @@ begin
   FPasFilename:=aPasFilename;
   FPasResolver:=TPas2jsCompilerResolver.Create;
   FPasResolver.Owner:=Self;
-  FPasResolver.OnContinueParsing:=@FPasResolverContinueParsing;
   FPasResolver.OnFindModule:=@OnPasTreeFindModule;
   FPasResolver.OnCheckSrcName:=@OnPasTreeCheckSrcName;
   FPasResolver.OnLog:=@OnPasResolverLog;
@@ -806,19 +809,6 @@ function TPas2jsCompilerFile.GetUsedBy(Section: TUsedBySection; Index: integer
   ): TPas2jsCompilerFile;
 begin
   Result:=TPas2jsCompilerFile(FUsedBy[Section][Index]);
-end;
-
-procedure TPas2jsCompilerFile.FPasResolverContinueParsing(Sender: TObject);
-begin
-  try
-    Parser.ParseContinueImplementation;
-  except
-    on E: ECompilerTerminate do
-      raise;
-    on E: Exception do
-      HandleException(E);
-  end;
-  ParserFinished;
 end;
 
 function TPas2jsCompilerFile.GetUsedByCount(Section: TUsedBySection): integer;
@@ -997,6 +987,8 @@ end;
 procedure TPas2jsCompilerFile.ParserFinished;
 begin
   try
+    Compiler.RemoveParsingModule(Self);
+
     if ShowDebug then
     begin
       Log.LogPlain('Pas-Module:');
@@ -1005,6 +997,9 @@ begin
 
     // analyze
     UseAnalyzer.AnalyzeModule(FPasModule);
+    {$IFDEF VerboseUnitQueue}
+    writeln('TPas2jsCompilerFile.ParserFinished ScopeModule=',GetObjName(UseAnalyzer.ScopeModule));
+    {$ENDIF}
   except
     on E: ECompilerTerminate do
       raise;
@@ -1031,20 +1026,22 @@ begin
   if ShowDebug then
     Log.LogPlain(['Debug: Parsing Pascal "',PasFilename,'"...']);
   if FPasModule<>nil then
-    raise ECompilerTerminate.Create('TPas2jsCompilerFile.ParsePascal '+PasFilename);
+    Compiler.RaiseInternalError(20180305190321,PasFilename);
   try
-    // parse Pascal
+    {$IFDEF VerboseUnitQueue}
+    writeln('TPas2jsCompilerFile.ParsePascal ',PasFilename);
+    {$ENDIF}
+    Compiler.AddParsingModule(Self);
     PascalResolver.InterfaceOnly:=IsForeign;
     if IsMainFile then
       Parser.ParseMain(FPasModule)
     else
       Parser.ParseSubModule(FPasModule);
-    if PasModule.CustomData=nil then
-      PasModule.CustomData:=Self;
-    if (FPasModule.ImplementationSection<>nil)
-        and (FPasModule.ImplementationSection.PendingUsedIntf<>nil) then
-      exit;
-    ParserFinished;
+    {$IFDEF VerboseUnitQueue}
+    writeln('ppp2 TPas2jsCompilerFile.ParsePascal ',PasFilename,' Finished=',Parser.CurModule=nil);
+    {$ENDIF}
+    if Parser.CurModule=nil then
+      ParserFinished;
   except
     on E: ECompilerTerminate do
       raise;
@@ -1053,6 +1050,30 @@ begin
   end;
   if (PasModule<>nil) and (PasModule.CustomData=nil) then
     PasModule.CustomData:=Self;
+end;
+
+procedure TPas2jsCompilerFile.ParsePascalContinue;
+begin
+  if ShowDebug then
+    Log.LogPlain(['Debug: Continue parsing Pascal "',PasFilename,'"...']);
+  if FPasModule=nil then
+    Compiler.RaiseInternalError(20180305190338,PasFilename);
+  try
+    {$IFDEF VerboseUnitQueue}
+    writeln('TPas2jsCompilerFile.ParsePascalContinue ',PasFilename);
+    {$ENDIF}
+    Parser.ParseContinue;
+    {$IFDEF VerboseUnitQueue}
+    writeln('TPas2jsCompilerFile.ParsePascalContinue ',PasFilename,' finished=',Parser.CurModule=nil);
+    {$ENDIF}
+    if Parser.CurModule=nil then
+      ParserFinished;
+  except
+    on E: ECompilerTerminate do
+      raise;
+    on E: Exception do
+      HandleException(E);
+  end;
 end;
 
 procedure TPas2jsCompilerFile.CreateJS;
@@ -1404,7 +1425,7 @@ begin
 
     // parse Pascal
     aFile.ParsePascal;
-    // beware: the parser may not yet have finished due to unit cycles
+    // beware: the parser may not yet have finished
   end;
 
   Result:=aFile.PasModule;
@@ -1449,6 +1470,18 @@ begin
     ProcessorECMAScript5: AddDefine('ECMAScript', '5');
     ProcessorECMAScript6: AddDefine('ECMAScript', '6');
   end;
+end;
+
+procedure TPas2jsCompiler.AddParsingModule(aFile: TPas2jsCompilerFile);
+begin
+  if FParsingModules.IndexOf(aFile)>=0 then
+    exit;
+  FParsingModules.Add(aFile);
+end;
+
+procedure TPas2jsCompiler.RemoveParsingModule(aFile: TPas2jsCompilerFile);
+begin
+  FParsingModules.Remove(aFile);
 end;
 
 procedure TPas2jsCompiler.ConditionEvalLog(Sender: TCondDirectiveEvaluator;
@@ -1510,6 +1543,7 @@ begin
     if MainFile=nil then exit;
     // parse and load Pascal files recursively
     FMainFile.ParsePascal;
+    ParseQueue;
 
     // whole program optimization
     if MainFile.PasModule is TPasProgram then
@@ -1545,6 +1579,57 @@ begin
       Log.LogMsgIgnoreFilter(nCompilationAborted,[]);
     CombinedFileWriter.Free;
   end;
+end;
+
+procedure TPas2jsCompiler.ParseQueue;
+var
+  i: Integer;
+  aFile: TPas2jsCompilerFile;
+  Found: Boolean;
+  Section: TPasSection;
+begin
+  // parse til exception or all modules have finished
+  repeat
+    {$IF defined(VerbosePasResolver) or defined(VerboseUnitQueue)}
+    writeln('TPas2jsCompiler.ParseQueue FParsingModules.Count=',FParsingModules.Count);
+    {$ENDIF}
+    Found:=false;
+    for i:=FParsingModules.Count-1 downto 0 do
+      begin
+      aFile:=TPas2jsCompilerFile(FParsingModules[i]);
+      if not aFile.Parser.CanParseContinue(Section) then
+        begin
+        {$IF defined(VerbosePasResolver) or defined(VerboseUnitQueue)}
+        writeln('TPas2jsCompiler.ParseQueue aFile=',aFile.PasFilename,' NOT YET READY');
+        {$ENDIF}
+        if aFile.Parser.CurModule=nil then
+          RaiseInternalError(20180306111410,'File='+aFile.PasFilename+' Parser.CurModule=nil');
+        continue;
+        end;
+      Found:=true;
+      {$IF defined(VerbosePasResolver) or defined(VerboseUnitQueue)}
+      writeln('TPas2jsCompiler.ParseQueue aFile=',aFile.PasFilename,' Section=',GetObjName(Section));
+      {$ENDIF}
+      aFile.ParsePascalContinue;
+      break;
+      end;
+  until not Found;
+  {$IF defined(VerbosePasResolver) or defined(VerboseUnitQueue)}
+  writeln('TPas2jsCompiler.ParseQueue END FParsingModules.Count=',FParsingModules.Count);
+  {$ENDIF}
+
+  // check consistency
+  for i:=0 to FParsingModules.Count-1 do
+    begin
+    aFile:=TPas2jsCompilerFile(FParsingModules[i]);
+    if aFile.Parser.CurModule<>nil then
+      begin
+      {$IF defined(VerbosePasResolver) or defined(VerboseUnitQueue)}
+      writeln('TPas2jsCompiler.ParseQueue aFile=',aFile.PasFilename,' was not finished');
+      {$ENDIF}
+      RaiseInternalError(20180305185342,aFile.PasFilename);
+      end;
+    end;
 end;
 
 function TPas2jsCompiler.MarkNeedBuilding(aFile: TPas2jsCompilerFile;
@@ -1609,7 +1694,6 @@ begin
     else if (aFile.JSFilename<>'')
     and (DirectoryCache.FileAge(aFile.PasFilename)>DirectoryCache.FileAge(aFile.JSFilename))
     then begin
-      // ToDo: replace FileAge with checksum
       Mark(nUnitNeedsCompilePasHasChanged,[aFile.GetModuleName,FileCache.FormatPath(aFile.JSFilename)])
     end;
   end;
@@ -3014,6 +3098,7 @@ begin
   //FConditionEval.OnEvalFunction:=@ConditionEvalFunction;
 
   FFiles:=TAVLTree.Create(@CompareCompilerFilesPasFile);
+  FParsingModules:=TFPList.Create;
   FUnits:=TAVLTree.Create(@CompareCompilerFilesPasUnitname);
 
   InitParamMacros;
@@ -3026,6 +3111,7 @@ begin
 
   FMainFile:=nil;
   FreeAndNil(FUnits);
+  FreeAndNil(FParsingModules);
   FFiles.FreeAndClear;
   FreeAndNil(FFiles);
 
@@ -3116,6 +3202,7 @@ begin
 
   FMainFile:=nil;
   FUnits.Clear;
+  FParsingModules.Clear;
   FFiles.FreeAndClear;
 
   FCompilerExe:='';

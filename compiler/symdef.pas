@@ -533,6 +533,7 @@ interface
           function elecount : asizeuint;
           constructor create_from_pointer(def:tpointerdef);virtual;
           constructor create(l,h:asizeint;def:tdef);virtual;
+          constructor create_openarray;virtual;
           class function getreusable(def: tdef; elems: asizeint): tarraydef; virtual;
           { same as above, but in case the def must never be freed after the
             current module has been compiled -- even if the def was not written
@@ -3662,6 +3663,12 @@ implementation
       end;
 
 
+    constructor tarraydef.create_openarray;
+      begin
+        self.create(0,-1,sizesinttype)
+      end;
+
+
     class function tarraydef.getreusable(def: tdef; elems: asizeint): tarraydef;
       var
         res: PHashSetItem;
@@ -3696,6 +3703,7 @@ implementation
         result:=tarraydef(res^.Data);
       end;
 
+
     class function tarraydef.getreusable_no_free(def: tdef; elems: asizeint): tarraydef;
       begin
         result:=getreusable(def,elems);
@@ -3710,6 +3718,7 @@ implementation
         symtable:=nil;
         inherited;
       end;
+
 
     constructor tarraydef.create_from_pointer(def:tpointerdef);
       begin
