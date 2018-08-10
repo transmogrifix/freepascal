@@ -680,6 +680,7 @@ implementation
                     begin
                       istyperenaming:=true;
                       include(newtype.symoptions,sp_explicitrename);
+                      maybe_add_used_by(hdef, newtype);
                     end;
                   if isunique then
                     begin
@@ -690,9 +691,13 @@ implementation
                       if is_object(hdef) or
                          is_class_or_interface_or_dispinterface(hdef) then
                         begin
-                          { just create a child class type; this is
-                            Delphi-compatible }
-                          hdef:=cobjectdef.create(tobjectdef(hdef).objecttype,genorgtypename,tobjectdef(hdef),true);
+                          if oo_is_forward in tobjectdef(hdef).objectoptions then
+                            { Forward declarations are not allowed. }
+                            Message1(parser_e_forward_declaration_must_be_resolved, hdef.typesymbolprettyname)
+                          else
+                            { just create a child class type; this is
+                              Delphi-compatible }
+                            hdef:=cobjectdef.create(tobjectdef(hdef).objecttype,genorgtypename,tobjectdef(hdef),true);
                         end
                       else
                         begin
@@ -946,6 +951,9 @@ implementation
                 ((idtoken in [_PRIVATE,_PROTECTED,_PUBLIC,_PUBLISHED,_STRICT]) or
                  ((m_final_fields in current_settings.modeswitches) and
                   (idtoken=_FINAL))));
+
+         resolve_forward_generic_types;
+
          { resolve type block forward declarations and restore a unit
            container for them }
          resolve_forward_types;

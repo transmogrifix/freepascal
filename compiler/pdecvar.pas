@@ -448,7 +448,7 @@ implementation
            begin
               consume(_COLON);
               single_type(p.propdef,[stoAllowSpecialization]);
-
+              maybe_add_used_by(p.propdef, p);
               if is_dispinterface(astruct) and not is_automatable(p.propdef) then
                 Message1(type_e_not_automatable,p.propdef.typename);
 
@@ -1558,6 +1558,7 @@ implementation
          fieldvs   : tfieldvarsym;
          hstaticvs : tstaticvarsym;
          vs    : tabstractvarsym;
+         absvs : tabsolutevarsym;
          srsym : tsym;
          srsymtable : TSymtable;
          visibility : tvisibility;
@@ -1730,6 +1731,7 @@ implementation
                begin
                  fieldvs:=tfieldvarsym(sc[i]);
                  fieldvs.vardef:=hdef;
+                 maybe_add_used_by(hdef, fieldvs);
                  { insert any additional hint directives }
                  fieldvs.symoptions := fieldvs.symoptions + hintsymoptions;
                  if deprecatedmsg<>nil then
@@ -1794,6 +1796,11 @@ implementation
                        cnodeutils.insertbssdata(hstaticvs);
                      if vd_final in options then
                        hstaticvs.varspez:=vs_final;
+                     maybe_add_used_by(hdef, hstaticvs);
+                     { hstaticvs has generated an absvarsym, add it to used by as well }
+                     absvs := tabsolutevarsym(recst.Find(lower(generate_nested_name(recst,'_'))+'_'+fieldvs.name));
+                     if Assigned(absvs) then
+                       maybe_add_used_by(hdef, absvs);
                    end;
                  if removeclassoption then
                    begin

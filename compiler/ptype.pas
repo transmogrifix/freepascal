@@ -39,6 +39,8 @@ interface
       TSingleTypeOptions=set of TSingleTypeOption;
 
     procedure resolve_forward_types;
+    procedure resolve_forward_generic_types;
+    procedure maybe_add_used_by(def : tdef; sym: tsym); inline;
 
     { reads a string, file type or a type identifier }
     procedure single_type(var def:tdef;options:TSingleTypeOptions);
@@ -76,7 +78,7 @@ implementation
        jvmdef,
 {$endif}
        { modules }
-       fmodule,
+       fmodule, nobj,
        { pass 1 }
        node,
        nset,ncnv,ncon,nld,
@@ -235,6 +237,126 @@ implementation
         current_module.checkforwarddefs.clear;
       end;
 
+    procedure resolve_forward_generic_types;
+      var
+        i, r, oldIdx: longint;
+        def, newdef : tobjectdef;
+        hmodule : tmodule;
+        fileinfo : tfileposinfo;
+        old_block_type : tblock_type;
+        oldcurrent_filepos : tfileposinfo;
+        replaydepth : longint;
+        genericdef:tstoreddef;
+        hadtypetoken : boolean;
+        recordbuf : tdynamicarray;
+        vmtbuilder : tvmtbuilder;
+      begin
+        for i:= current_module.checkforwarddefs.Count-1 downto 0 do
+          begin
+            case tdef(current_module.checkforwarddefs[i]).typ of
+              pointerdef,
+              classrefdef:;
+              objectdef :
+                begin
+                  def:=tobjectdef(current_module.checkforwarddefs[i]);
+                  if not assigned(def.genericdef) then
+                    continue;
+
+                  old_block_type:=block_type;
+                  block_type:=bt_type;
+
+                  genericdef:=def.genericdef;
+                  hmodule:=find_module_from_symtable(genericdef.owner);
+                  if hmodule=nil then
+                    internalerror(2018051202);
+                  oldcurrent_filepos:=current_filepos;
+                  { use the index the module got from the current compilation process }
+                  current_filepos.moduleindex:=hmodule.unit_index;
+                  current_tokenpos:=current_filepos;
+                  if parse_generic then
+                    begin
+                      recordbuf:=current_scanner.recordtokenbuf;
+                      current_scanner.recordtokenbuf:=nil;
+                    end
+                  else
+                    recordbuf:=nil;
+                  replaydepth:=current_scanner.replay_stack_depth;
+
+                  current_scanner.startreplaytokens(genericdef.generictokenbuf);
+                  hadtypetoken:=false;
+                  read_named_type(tdef(newdef),def.typesym,genericdef,def.genericparas,false,hadtypetoken);
+                  ttypesym(def.typesym).typedef:=newdef;
+                  newdef.typesym:=def.typesym;
+
+                  case newdef.typ of
+                  { Build VMT indexes for classes and read hint directives }
+                  objectdef:
+                    begin
+                      if replaydepth>current_scanner.replay_stack_depth then
+                        begin
+                          try_consume_hintdirective(newdef.typesym.symoptions,newdef.typesym.deprecatedmsg);
+                          if replaydepth>current_scanner.replay_stack_depth then
+                            consume(_SEMICOLON);
+                        end;
+
+                      vmtbuilder:=TVMTBuilder.Create(newdef);
+                      vmtbuilder.generate_vmt;
+                      vmtbuilder.free;
+                    end;
+                  end;
+                  current_filepos:=oldcurrent_filepos;
+
+                  { Consume the remainder of the buffer }
+                  while current_scanner.replay_stack_depth>replaydepth do
+                    consume(token);
+                  if assigned(recordbuf) then
+                    begin
+                      if assigned(current_scanner.recordtokenbuf) then
+                        internalerror(2018081002);
+                      current_scanner.recordtokenbuf:=recordbuf;
+                    end;
+                  block_type:=old_block_type;
+
+                  if Assigned(def.used_by) then
+                    begin
+                      for r := 0 to def.used_by.Count-1 do
+                        case tstoredsym(def.used_by[r]).typ of
+                          fieldvarsym,
+                          staticvarsym,
+                          absolutevarsym,
+                          paravarsym:
+                            tabstractvarsym(def.used_by[r]).vardef := newdef;
+                          propertysym:
+                            tpropertysym(def.used_by[r]).propdef := newdef;
+                          typesym:
+                            ttypesym(def.used_by[r]).typedef := newdef;
+                          else
+                            internalerror(2018081003);
+                        end;
+                    end;
+
+                  oldIdx := current_module.globalsymtable.DefList.IndexOf(def);
+                  newDef.defid:= def.defid;
+                  current_module.pendingspecializations.Remove(def);
+                  current_module.pendingspecializations.Add(newDef.typename, newDef);
+                  current_module.globalsymtable.deletedef(def);
+                  current_module.checkforwarddefs.Delete(i);
+                end;
+              else
+                internalerror(2018081004);
+            end;
+          end;
+      end;
+
+    procedure maybe_add_used_by(def : tdef; sym: tsym);
+    begin
+      if (def is tobjectdef) and (oo_is_forward in tobjectdef(def).objectoptions) and assigned(tobjectdef(def).genericdef) then
+        begin
+         if not Assigned(def.used_by) then
+           def.used_by := TFPObjectList.Create(False);
+         def.used_by.Add(sym);
+        end;
+    end;
 
     procedure id_type(var def : tdef;isforwarddef,checkcurrentrecdef,allowgenericsyms,allowunitsym:boolean;out srsym:tsym;out srsymtable:tsymtable;out is_specialize:boolean); forward;
 
