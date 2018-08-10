@@ -62,7 +62,9 @@ interface
          dbg_state   : tdefdbgstatus;
          defoptions  : tdefoptions;
          defstates   : tdefstates;
+         used_by     : TFPObjectList;
          constructor create(dt:tdeftyp);
+         destructor destroy;override;
          procedure buildderef;virtual;abstract;
          procedure buildderefimpl;virtual;abstract;
          procedure deref;virtual;abstract;
@@ -281,6 +283,12 @@ implementation
          dbg_state:=dbg_state_unused;
          stab_number:=0;
          defid:=defid_not_registered;
+      end;
+
+    destructor tdef.destroy;
+      begin
+        used_by.free;
+        inherited destroy;
       end;
 
 

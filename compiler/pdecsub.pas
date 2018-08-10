@@ -536,7 +536,7 @@ implementation
               { update varsym }
               vs.vardef:=hdef;
               vs.defaultconstsym:=defaultvalue;
-
+              maybe_add_used_by(hdef, vs);
               if (target_info.system in [system_powerpc_morphos,system_m68k_amiga]) then
                 begin
                   if locationstr<>'' then

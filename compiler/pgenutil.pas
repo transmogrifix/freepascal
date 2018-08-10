@@ -46,6 +46,7 @@ uses
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
     function parse_generic_specialization_types(genericdeflist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring):boolean;
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
+    procedure remove_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
     procedure maybe_insert_generic_rename_symbol(const name:tidstring;genericlist:tfphashobjectlist);
     function generate_generic_name(const name:tidstring;specializename:ansistring;owner_hierarchy:string):tidstring;
     procedure split_generic_name(const name:tidstring;out nongeneric:string;out count:longint);
@@ -1056,9 +1057,13 @@ uses
                             consume(_SEMICOLON);
                         end;
 
-                      vmtbuilder:=TVMTBuilder.Create(tobjectdef(result));
-                      vmtbuilder.generate_vmt;
-                      vmtbuilder.free;
+                      { Do not build VMT for forward declarations, it will be built later when fully defined. }
+                      if not (oo_is_forward in tobjectdef(result).objectoptions) then
+                        begin
+                          vmtbuilder:=TVMTBuilder.Create(tobjectdef(result));
+                          vmtbuilder.generate_vmt;
+                          vmtbuilder.free;
+                        end;
                     end;
                   { handle params, calling convention, etc }
                   procvardef:
@@ -1384,6 +1389,7 @@ uses
         i : longint;
         generictype,sym : ttypesym;
         st : tsymtable;
+        hid : THashedIDString;
       begin
         def.genericdef:=genericdef;
         if not assigned(genericlist) then
@@ -1408,6 +1414,22 @@ uses
         for i:=0 to genericlist.count-1 do
           begin
             generictype:=ttypesym(genericlist[i]);
+            if generictype.realname[1]='$' then
+              hid.id:=Copy(generictype.realname,2,255)
+            else
+              hid.id:=Upper(generictype.realname);
+            if st.FindWithHash(hid) <> nil then
+              begin
+                if (generictype.typedef.typ=undefineddef) and (generictype.typedef<>cundefinedtype) then
+                  begin
+                    { the generic parameters were parsed before the genericdef existed thus the
+                      undefineddefs were added as part of the parent symtable }
+                    if assigned(generictype.typedef.owner) then
+                      generictype.typedef.owner.DefList.Extract(generictype.typedef);
+                  end;
+                continue;
+              end;
+
             if assigned(generictype.owner) then
               begin
                 sym:=ctypesym.create(genericlist.nameofindex(i),generictype.typedef,true);
@@ -1426,12 +1448,58 @@ uses
                       generictype.typedef.owner.DefList.Extract(generictype.typedef);
                     generictype.typedef.changeowner(st);
                   end;
-                st.insert(generictype);
                 include(generictype.symoptions,sp_generic_para);
               end;
             def.genericparas.add(genericlist.nameofindex(i),generictype);
           end;
        end;
+
+    procedure remove_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
+          var
+            i : longint;
+            generictype,sym : ttypesym;
+            st : tsymtable;
+          begin
+            if not assigned(genericlist) then
+              exit;
+
+            case def.typ of
+              recorddef,objectdef: st:=tabstractrecorddef(def).symtable;
+              arraydef,
+              procvardef:;
+              else
+                internalerror(2018081001);
+            end;
+
+            if (genericlist.count>0) and not assigned(def.genericparas) then
+              def.genericparas:=tfphashobjectlist.create(false);
+            for i:=0 to genericlist.count-1 do
+              begin
+                generictype:=ttypesym(genericlist[i]);
+                if assigned(generictype.owner) then
+                  begin
+                    sym:=ctypesym.create(genericlist.nameofindex(i),generictype.typedef,true);
+                    { type parameters need to be added as strict private }
+                    sym.visibility:=vis_strictprivate;
+                    st.insert(sym);
+                    include(sym.symoptions,sp_generic_para);
+                  end
+                else
+                  begin
+                    if (generictype.typedef.typ=undefineddef) and (generictype.typedef<>cundefinedtype) then
+                      begin
+                        { the generic parameters were parsed before the genericdef existed thus the
+                          undefineddefs were added as part of the parent symtable }
+                        if assigned(generictype.typedef.owner) then
+                          generictype.typedef.owner.DefList.Extract(generictype.typedef);
+                        generictype.typedef.changeowner(st);
+                      end;
+                    st.insert(generictype);
+                    include(generictype.symoptions,sp_generic_para);
+                  end;
+                def.genericparas.add(genericlist.nameofindex(i),generictype);
+              end;
+           end;
 
     procedure maybe_insert_generic_rename_symbol(const name:tidstring;genericlist:tfphashobjectlist);
       var
