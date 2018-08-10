@@ -1448,6 +1448,7 @@ uses
                       generictype.typedef.owner.DefList.Extract(generictype.typedef);
                     generictype.typedef.changeowner(st);
                   end;
+                st.insert(generictype);
                 include(generictype.symoptions,sp_generic_para);
               end;
             def.genericparas.add(genericlist.nameofindex(i),generictype);
