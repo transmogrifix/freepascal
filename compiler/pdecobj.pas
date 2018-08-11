@@ -1502,7 +1502,7 @@ implementation
 
             { generic parameter types were registered globaly, remove them }
             symtablestack.push(current_structdef.symtable);
-            remove_generic_parameter_types(current_structdef,genericdef,genericlist);
+            update_generic_para_ownership(current_structdef,genericdef,genericlist);
             symtablestack.pop(current_structdef.symtable);
             current_structdef.genericdef := genericdef;
 
