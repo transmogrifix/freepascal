@@ -43,6 +43,7 @@ uses
     function generate_specialization_phase1(out context:tspecializationcontext;genericdef:tdef;parsedtype:tdef;symname:string;parsedpos:tfileposinfo):tdef;
     function generate_specialization_phase2(context:tspecializationcontext;genericdef:tstoreddef;parse_class_parent:boolean;_prettyname:ansistring):tdef;
     function check_generic_constraints(genericdef:tstoreddef;paradeflist:tfpobjectlist;poslist:tfplist):boolean;
+    function compare_generic_parameters(deflist1, deflist2 : tfphashobjectlist): boolean;
     function parse_generic_parameters(allowconstraints:boolean):tfphashobjectlist;
     function parse_generic_specialization_types(genericdeflist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring):boolean;
     procedure insert_generic_parameter_types(def:tstoreddef;genericdef:tstoreddef;genericlist:tfphashobjectlist);
@@ -300,6 +301,34 @@ uses
           end;
       end;
 
+    function compare_generic_parameters(deflist1, deflist2 : tfphashobjectlist):boolean;
+      var
+        i : integer;
+        ts1, ts2 : ttypesym;
+      begin
+        if deflist1.count<>deflist2.count then
+          internalerror(2018081091);
+
+        for i:=0 to deflist1.count-1 do
+          begin
+            ts1 := ttypesym(deflist1[i]);
+            ts2 := ttypesym(deflist2[i]);
+            if (ts1.typedef.typ<>ts2.typedef.typ) or (lower(ts1.realname)<>lower(ts2.Name)) then
+              exit(false);
+
+            if (ts1.typedef.typ = errordef) or (ts2.typedef.typ = errordef) or
+                (not assigned(tstoreddef(ts1.typedef).genconstraintdata)) then
+              continue;
+
+            if tstoreddef(ts1.typedef).genconstraintdata.flags <> tstoreddef(ts2.typedef).genconstraintdata.flags then
+              exit(false);
+
+            if gcf_class in tstoreddef(ts1.typedef).genconstraintdata.flags then
+              if tobjectdef(ts1.typedef).childof <> tobjectdef(ts2.typedef).childof then
+                exit(false);
+          end;
+        result := true;
+      end;
 
     function parse_generic_specialization_types_internal(genericdeflist:tfpobjectlist;poslist:tfplist;out prettyname,specializename:ansistring;parsedtype:tdef;parsedpos:tfileposinfo):boolean;
       var
@@ -1432,11 +1461,9 @@ uses
                 if st.FindWithHash(hid) <> nil then
                   begin
                     { delete the typedef if defined, it will not be used }
-                    if (generictype.typedef.typ=undefineddef) and
-                       (generictype.typedef<>cundefinedtype) and
+                    if (generictype.typedef<>cundefinedtype) and
                        (assigned(generictype.typedef.owner)) then
                          generictype.typedef.owner.deletedef(generictype.typedef);
-//                          generictype.typedef.owner.DefList.Extract(generictype.typedef);
                     { delete the symbol as well }
                     if assigned(generictype.owner) then
                       generictype.owner.Delete(generictype)
@@ -1476,11 +1503,9 @@ uses
         for i:=0 to genericlist.count-1 do
           begin
             generictype:=ttypesym(genericlist[i]);
-            if assigned(generictype.owner) then
-              internalerror(2018081010)
-            else
+            if not assigned(generictype.owner) then
               begin
-                if (generictype.typedef.typ=undefineddef) and (generictype.typedef<>cundefinedtype) then
+                if (generictype.typedef<>cundefinedtype) then
                   begin
                     { the generic parameters were parsed before the genericdef existed thus the
                       undefineddefs were added as part of the parent symtable }

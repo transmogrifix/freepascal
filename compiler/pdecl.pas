@@ -566,6 +566,11 @@ implementation
                     is_implicit_pointer_object_type(ttypesym(sym).typedef) and
                     (oo_is_forward in tobjectdef(ttypesym(sym).typedef).objectoptions) then
                   begin
+                    if assigned(generictypelist) and assigned(tobjectdef(ttypesym(sym).typedef).genericparas) then
+                      { check if generic parameters match the forward declaration }
+                      if not compare_generic_parameters(generictypelist, tobjectdef(ttypesym(sym).typedef).genericparas) then
+                        Message1(type_e_generic_declaration_does_not_match, ttypesym(sym).prettyname);
+
                     case token of
                       _CLASS :
                         objecttype:=default_class_type;

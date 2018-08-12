@@ -40,7 +40,7 @@ interface
 
     procedure resolve_forward_types;
     procedure resolve_forward_generic_types;
-    procedure maybe_add_used_by(def : tdef; sym: tsym); inline;
+    procedure maybe_add_used_by(def : tdef; sym: tsym);
 
     { reads a string, file type or a type identifier }
     procedure single_type(var def:tdef;options:TSingleTypeOptions);
